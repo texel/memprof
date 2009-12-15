@@ -24,42 +24,36 @@ extern struct inline_tramp_tbl_entry *inline_tramp_table;
 struct tramp_inline {
   unsigned char jmp[1];
   uint32_t displacement;
-  unsigned char pad[2];
+  unsigned char pad[1];
 } __attribute__((__packed__));
 
 struct tramp_tbl_entry {
-  unsigned char rbx_save[1];
-  unsigned char mov[2];
+  unsigned char ebx_save[1];
+  unsigned char mov[1];
   void *addr;
-  unsigned char callq[2];
-  unsigned char rbx_restore[1];
+  unsigned char calll[2];
+  unsigned char ebx_restore[1];
   unsigned char ret[1];
 } __attribute__((__packed__));
 
 struct inline_tramp_tbl_entry {
-  unsigned char rex[1];
   unsigned char mov[1];
   unsigned char src_reg[1];
-  uint32_t mov_displacement;
+  void * mov_addr;
 
   struct {
-    unsigned char push_rdi[1];
-    unsigned char mov_rdi[3];
-    uint32_t rdi_source_displacement;
-    unsigned char push_rbx[1];
-    unsigned char push_rbp[1];
-    unsigned char save_rsp[3];
-    unsigned char align_rsp[4];
-    unsigned char mov[2];
-    void *addr;
-    unsigned char callq[2];
-    unsigned char leave[1];
-    unsigned char rbx_restore[1];
-    unsigned char rdi_restore[1];
+    unsigned char push_ebx[1];
+    unsigned char pushl[2];
+    void * freelist;
+    unsigned char mov_ebx[1];
+    void * fn_addr;
+    unsigned char calll[2];
+    unsigned char pop_ebx[1];
+    unsigned char restore_ebx[1];
   } __attribute__((__packed__)) frame;
 
   unsigned char jmp[1];
-  uint32_t jmp_displacement;
+  uint32_t jmp_addr;
 } __attribute__((__packed__));
 
 void

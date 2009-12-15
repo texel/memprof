@@ -263,38 +263,32 @@ create_tramp_table()
   void *region = NULL;
 
   struct tramp_tbl_entry ent = {
-    .rbx_save      = {'\x53'},                // push rbx
-    .mov           = {'\x48', '\xbb'},        // mov addr into rbx
+    .ebx_save      = {'\x53'},                // push ebx
+    .mov           = {'\xbb'},                 // mov addr into ebx
     .addr          = error_tramp,             // ^^^
-    .callq         = {'\xff', '\xd3'},        // callq rbx
-    .rbx_restore   = {'\x5b'},                // pop rbx
+    .calll         = {'\xff', '\xd3'},        // calll ebx
+    .ebx_restore   = {'\x5b'},                // pop ebx
     .ret           = {'\xc3'},                // ret
   };
 
   struct inline_tramp_tbl_entry inline_ent = {
-    .rex     = {'\x48'},
     .mov     = {'\x89'},
     .src_reg = {'\x05'},
-    .mov_displacement = 0,
+    .mov_addr = 0,
 
     .frame = {
-      .push_rdi = {'\x57'},
-      .mov_rdi = {'\x48', '\x8b', '\x3d'},
-      .rdi_source_displacement = 0,
-      .push_rbx = {'\x53'},
-      .push_rbp = {'\x55'},
-      .save_rsp = {'\x48', '\x89', '\xe5'},
-      .align_rsp = {'\x48', '\x83', '\xe4', '\xf0'},
-      .mov = {'\x48', '\xbb'},
-      .addr = error_tramp,
-      .callq = {'\xff', '\xd3'},
-      .leave = {'\xc9'},
-      .rbx_restore = {'\x5b'},
-      .rdi_restore = {'\x5f'},
+      .push_ebx = {'\x53'},
+      .pushl = {'\xff', '\x35'},
+      .freelist = 0,
+      .mov_ebx = {'\xbb'},
+      .fn_addr = 0,
+      .calll = {'\xff', '\xd3'},
+      .pop_ebx = {'\x5b'},
+      .restore_ebx = {'\x5b'},
     },
 
     .jmp  = {'\xe9'},
-    .jmp_displacement = 0,
+    .jmp_addr = 0,
   };
 
   if ((region = bin_allocate_page()) == MAP_FAILED) {
@@ -340,7 +334,7 @@ update_callqs(int entry, void *trampee_addr)
 static void
 hook_freelist(int entry)
 {
-  long sizes[] = { 0, 0, 0 };
+  size_t sizes[] = { 0, 0, 0 };
   void *sym1 = bin_find_symbol("gc_sweep", &sizes[0]);
 
   if (sym1 == NULL) {
@@ -355,100 +349,103 @@ hook_freelist(int entry)
   size_t i = 0;
   char *byte = freelist_callers[0];
   void *freelist = bin_find_symbol("freelist", NULL);
-  uint32_t mov_target =  0;
+  void *mov_target =  0;
   void *aligned_addr = NULL;
   size_t count = 0;
 
   /* This is the stage 1 trampoline for hooking the inlined add_freelist
    * function .
    *
-   * NOTE: The original instruction mov %reg, freelist is 7 bytes wide,
-   * whereas jmpq $displacement is only 5 bytes wide. We *must* pad out
-   * the next two bytes. This will be important to remember below.
+   * NOTE: We don't know (yet) how wide the instruction we'll overwrite is.
+   * If its moving from %eax, it'll be 5 bytes. Any other register it will be
+   * 6 bytes.
+   *
+   * Depending on what is getting overwritten the pad byte of this struct may
+   * or may not actually get copied.
    */
   struct tramp_inline tramp = {
     .jmp           = {'\xe9'},
     .displacement  = 0,
-    .pad           = {'\x90', '\x90'},
+    .pad           = {'\x90'},
   };
 
   struct inline_tramp_tbl_entry *inl_tramp_st2 = NULL;
+  size_t pad_length = 0;
 
   for (;i < max;) {
     /* make sure it is a mov instruction */
-    if (byte[1] == '\x89') {
+    if (byte[0] == '\xa3' ||
+        byte[0] == '\x89') {
 
-      /* Read the REX byte to make sure it is a mov that we care about */
-      if ((byte[0] == '\x48') ||
-          (byte[0] == '\x4c')) {
+      /* if the byte is 0xa3 then we're moving from %eax, so
+       * the length is only 5, so we don't need the pad.
+       *
+       * otherwise, we're moving from something else, so the
+       * length is going to be 6 and we need a NOP.
+       */
+      if (byte[0] == '\xa3')
+        pad_length = 0;
+      else
+        pad_length = 1;
 
-        /* Grab the target of the mov. REMEMBER: in this case the target is 
-         * a 32bit displacment that gets added to RIP (where RIP is the adress of
-         * the next instruction).
-         */
-        mov_target = *(uint32_t *)(byte + 3);
+      /* Grab the target of the mov.
+       *
+       * REMEMBER: in this case the target is a 32bit displacment that gets
+       * added to EIP (where EIP is the adress of the next instruction).
+       */
+      mov_target = (void *)(*(uint32_t *)(byte + 1 + pad_length));
 
-        /* Sanity check. Ensure that the displacement from freelist to the next
-         * instruction matches the mov_target. If so, we know this mov is
-         * updating freelist.
-         */
-        if ((freelist - (void *)(byte+7)) == mov_target) {
-          /* Before the stage 1 trampoline gets written, we need to generate
-           * the code for the stage 2 trampoline. Let's copy over the REX byte
-           * and the byte which mentions the source register into the stage 2
-           * trampoline.
+      /* Sanity check. Ensure that the mov target is actually freelist. */
+      if (freelist == mov_target) {
+
+        /* grab the stage2 trampoline entry */
+        inl_tramp_st2 = inline_tramp_table + entry;
+
+        if (byte[0] == '\xa3') {
+          /* if it's a mov from %eax, insert a NOP at the top.
+           * REMEMBER: mov %eax is only 1 byte. other movs are 2.
            */
-          inl_tramp_st2 = inline_tramp_table + entry;
-          inl_tramp_st2->rex[0] = byte[0];
-          inl_tramp_st2->src_reg[0] = byte[2];
-
-          /* Setup the stage 1 trampoline. Calculate the displacement to
-           * the stage 2 trampoline from the next instruction.
-           *
-           * REMEMBER!!!! The next instruction will be NOP after our stage 1
-           * trampoline is written. This is 5 bytes into the structure, even
-           * though the original instruction we overwrote was 7 bytes.
+          inl_tramp_st2->mov[0] = '\x90';
+          inl_tramp_st2->src_reg[0] = '\xa3';
+        } else {
+          /* If it's a mov from anything other than %eax, we need to copy
+           * the *existing* mov bytes to correctly replicate the dest register.
            */
-          tramp.displacement = (uint32_t)((void *)(inl_tramp_st2) - (void *)(byte+5));
-
-          /* Figure out what page the stage 1 tramp is gonna be written to, mark
-           * it WRITE, write the trampoline in, and then remove WRITE permission.
-           */
-          aligned_addr = (void*)(((long)byte)&~(0xffff));
-          mprotect(aligned_addr, (((void *)byte) - aligned_addr) + 10, PROT_READ|PROT_WRITE|PROT_EXEC);
-          memcpy(byte, &tramp, sizeof(struct tramp_inline));
-          mprotect(aligned_addr, (((void *)byte) - aligned_addr) + 10, PROT_READ|PROT_EXEC);
-
-          /* Finish setting up the stage 2 trampoline. */
-
-          /* calculate the displacement to freelist from the next instruction.
-           *
-           * This is used to replicate the original instruction we overwrote.
-           */
-          inl_tramp_st2->mov_displacement = freelist - (void *)&(inl_tramp_st2->frame);
-
-          /* fill in the displacement to freelist from the next instruction.
-           *
-           * This is to arrange for the new value in freelist to be in %rdi, and as such
-           * be the first argument to the C handler. As per the amd64 ABI.
-           */
-          inl_tramp_st2->frame.rdi_source_displacement = freelist - (void *)&(inl_tramp_st2->frame.push_rbx);
-
-          /* jmp back to the instruction after stage 1 trampoline was inserted 
-           *
-           * This can be 5 or 7, it doesn't matter. If its 5, we'll hit our 2
-           * NOPS. If its 7, we'll land directly on the next instruction.
-           */
-          inl_tramp_st2->jmp_displacement = (uint32_t)((void *)(byte + 7) -
-                                                       (void *)(inline_tramp_table + entry + 1));
-
-          /* write the address of our C level trampoline in to the structure */
-          inl_tramp_st2->frame.addr = freelist_tramp;
-
-          /* track the new entry and new trampoline size */
-          entry++;
-          inline_tramp_size++;
+          inl_tramp_st2->mov[0] = byte[0];
+          inl_tramp_st2->src_reg[0] = byte[1];
         }
+
+        /* fill in all the absolute addresses needed for our stage 2 tramp */
+        inl_tramp_st2->mov_addr = inl_tramp_st2->frame.freelist = freelist;
+        inl_tramp_st2->frame.fn_addr = freelist_tramp;
+
+        /* Setup the stage 1 trampoline. Calculate the displacement to
+         * the stage 2 trampoline from the next instruction.
+         *
+         * REMEMBER: The address of the next instruction depends on whether
+         * this mov was from %eax or somewhere else.
+         */
+        tramp.displacement = (uint32_t)((void *)(inl_tramp_st2) - (void *)(byte+5+pad_length));
+
+        /* Figure out what page the stage 1 tramp is gonna be written to, mark
+         * it WRITE, write the trampoline in, and then remove WRITE permission.
+         */
+        aligned_addr = (void*)(((long)byte)&~(0xffff));
+        mprotect(aligned_addr, (((void *)byte) - aligned_addr) + 10, PROT_READ|PROT_WRITE|PROT_EXEC);
+        memcpy(byte, &tramp, 5 + pad_length);
+        mprotect(aligned_addr, (((void *)byte) - aligned_addr) + 10, PROT_READ|PROT_EXEC);
+
+        /* jmp back to the instruction after stage 1 trampoline was inserted
+         *
+         * REMEMBER: Instruction length is variable, depends on where the mov
+         * was from, %eax or elsewhere.
+         */
+        inl_tramp_st2->jmp_addr = (uint32_t)((void *)(byte + 5 + pad_length) -
+                                             (void *)(inline_tramp_table + entry + 1));
+
+        /* track the new entry and new trampoline size */
+        entry++;
+        inline_tramp_size++;
       }
     }
 
@@ -472,7 +469,7 @@ insert_tramp(char *trampee, void *tramp)
   if (trampee_addr == NULL) {
     if (strcmp("add_freelist", trampee) == 0) {
       /* XXX super hack */
-      inline_tramp_table[inline_tramp_size].frame.addr = tramp;
+      inline_tramp_table[inline_tramp_size].frame.fn_addr = tramp;
       inline_tramp_size++;
       hook_freelist(inline_ent);
     } else {
