@@ -10,9 +10,9 @@
 #include <sys/mman.h>
 #include <err.h>
 
-#include <st.h>
 #include <ruby.h>
-#include <intern.h>
+#include <ruby/st.h>
+#include <ruby/intern.h>
 #include <node.h>
 
 #include "arch.h"
@@ -57,6 +57,16 @@ newobj_tramp()
     tracker = malloc(sizeof(*tracker));
 
     if (tracker) {
+#if 0
+      while (RUBY_VM_VALID_CONTROL_FRAME_P(cfp, end_cfp)) {
+        rb_iseq_t *iseq = cfp->iseq;
+        if (cfp->iseq && cfp->pc) {
+          tracker->line = rb_vm_get_sourceline(cfp);
+          tracker->source = strdup(RSTRING_PTR(iseq->filename));
+        }
+
+        cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
+      }
       if (ruby_current_node && ruby_current_node->nd_file && *ruby_current_node->nd_file) {
         tracker->source = strdup(ruby_current_node->nd_file);
         tracker->line = nd_line(ruby_current_node);
@@ -67,7 +77,9 @@ newobj_tramp()
         tracker->source = strdup("__null__");
         tracker->line = 0;
       }
-
+#endif
+      tracker->source = strdup("im lazy");
+      tracker->line = 420;
       tracker->obj = ret;
       st_insert(objs, (st_data_t)ret, (st_data_t)tracker);
     } else {
@@ -112,14 +124,8 @@ objs_tabulate(st_data_t key, st_data_t record, st_data_t arg)
   switch (TYPE(tracker->obj)) {
     case T_NONE:
       type = "__none__"; break;
-    case T_BLKTAG:
-      type = "__blktag__"; break;
     case T_UNDEF:
       type = "__undef__"; break;
-    case T_VARMAP:
-      type = "__varmap__"; break;
-    case T_SCOPE:
-      type = "__scope__"; break;
     case T_NODE:
       type = "__node__"; break;
     default:
@@ -255,8 +261,7 @@ memprof_track(int argc, VALUE *argv, VALUE self)
 
 #include <yajl/yajl_gen.h>
 #include <stdarg.h>
-#include "env.h"
-#include "re.h"
+#include "ruby/re.h"
 
 yajl_gen_status
 yajl_gen_cstr(yajl_gen gen, const char * str)
@@ -331,33 +336,34 @@ nd_type_str(VALUE obj)
 {
   switch(nd_type(obj)) {
     #define ND(type) case NODE_##type: return #type;
-    ND(METHOD);     ND(FBODY);      ND(CFUNC);    ND(SCOPE);
-    ND(BLOCK);      ND(IF);         ND(CASE);     ND(WHEN);
-    ND(OPT_N);      ND(WHILE);      ND(UNTIL);    ND(ITER);
-    ND(FOR);        ND(BREAK);      ND(NEXT);     ND(REDO);
-    ND(RETRY);      ND(BEGIN);      ND(RESCUE);   ND(RESBODY);
-    ND(ENSURE);     ND(AND);        ND(OR);       ND(NOT);
-    ND(MASGN);      ND(LASGN);      ND(DASGN);    ND(DASGN_CURR);
-    ND(GASGN);      ND(IASGN);      ND(CDECL);    ND(CVASGN);
-    ND(CVDECL);     ND(OP_ASGN1);   ND(OP_ASGN2); ND(OP_ASGN_AND);
-    ND(OP_ASGN_OR); ND(CALL);       ND(FCALL);    ND(VCALL);
-    ND(SUPER);      ND(ZSUPER);     ND(ARRAY);    ND(ZARRAY);
-    ND(HASH);       ND(RETURN);     ND(YIELD);    ND(LVAR);
-    ND(DVAR);       ND(GVAR);       ND(IVAR);     ND(CONST);
-    ND(CVAR);       ND(NTH_REF);    ND(BACK_REF); ND(MATCH);
-    ND(MATCH2);     ND(MATCH3);     ND(LIT);      ND(STR);
-    ND(DSTR);       ND(XSTR);       ND(DXSTR);    ND(EVSTR);
-    ND(DREGX);      ND(DREGX_ONCE); ND(ARGS);     ND(ARGSCAT);
-    ND(ARGSPUSH);   ND(SPLAT);      ND(TO_ARY);   ND(SVALUE);
-    ND(BLOCK_ARG);  ND(BLOCK_PASS); ND(DEFN);     ND(DEFS);
-    ND(ALIAS);      ND(VALIAS);     ND(UNDEF);    ND(CLASS);
-    ND(MODULE);     ND(SCLASS);     ND(COLON2);   ND(COLON3)
-    ND(CREF);       ND(DOT2);       ND(DOT3);     ND(FLIP2);
-    ND(FLIP3);      ND(ATTRSET);    ND(SELF);     ND(NIL);
-    ND(TRUE);       ND(FALSE);      ND(DEFINED);  ND(NEWLINE);
-    ND(POSTEXE);    ND(ALLOCA);     ND(DMETHOD);  ND(BMETHOD);
-    ND(MEMO);       ND(IFUNC);      ND(DSYM);     ND(ATTRASGN);
-    ND(LAST);
+    ND(METHOD);      ND(FBODY);      ND(CFUNC);      ND(SCOPE);
+    ND(BLOCK);       ND(IF);         ND(CASE);       ND(WHEN);
+    ND(OPT_N);       ND(WHILE);      ND(UNTIL);      ND(ITER);
+    ND(FOR);         ND(BREAK);      ND(NEXT);       ND(REDO);
+    ND(RETRY);       ND(BEGIN);      ND(RESCUE);     ND(RESBODY);
+    ND(ENSURE);      ND(AND);        ND(OR);         ND(MASGN);
+    ND(LASGN);       ND(DASGN);      ND(DASGN_CURR);
+    ND(GASGN);       ND(IASGN);      ND(IASGN2);     ND(CDECL);
+    ND(CVASGN);      ND(CVDECL);     ND(OP_ASGN1);   ND(OP_ASGN2);
+    ND(OP_ASGN_AND); ND(OP_ASGN_OR); ND(CALL);       ND(FCALL);
+    ND(VCALL);       ND(SUPER);      ND(ZSUPER);     ND(ARRAY);
+    ND(ZARRAY);      ND(VALUES);     ND(HASH);       ND(RETURN);
+    ND(YIELD);       ND(LVAR);       ND(DVAR);       ND(GVAR);
+    ND(IVAR);        ND(CONST);      ND(CVAR);       ND(NTH_REF);
+    ND(BACK_REF);    ND(MATCH);      ND(MATCH2);     ND(MATCH3);
+    ND(LIT);         ND(STR);        ND(DSTR);       ND(XSTR);
+    ND(DXSTR);       ND(EVSTR);      ND(DREGX);      ND(DREGX_ONCE);
+    ND(ARGS);        ND(ARGS_AUX);   ND(OPT_ARG);    ND(POSTARG);
+    ND(ARGSCAT);     ND(ARGSPUSH);   ND(SPLAT);      ND(TO_ARY);
+    ND(BLOCK_ARG);   ND(BLOCK_PASS); ND(DEFN);       ND(DEFS);
+    ND(ALIAS);       ND(VALIAS);     ND(UNDEF);      ND(CLASS);
+    ND(MODULE);      ND(SCLASS);     ND(COLON2);     ND(COLON3);
+    ND(DOT2);        ND(DOT3);       ND(FLIP2);      ND(FLIP3);
+    ND(ATTRSET);     ND(SELF);       ND(NIL);        ND(TRUE);
+    ND(FALSE);       ND(ERRINFO);    ND(DEFINED);    ND(POSTEXE);
+    ND(ALLOCA);      ND(BMETHOD);    ND(MEMO);       ND(IFUNC);
+    ND(DSYM);        ND(ATTRASGN);   ND(PRELUDE);    ND(LAMBDA);
+    ND(OPTBLOCK);    ND(LAST);
     default:
       return "unknown";
   }
@@ -399,7 +405,7 @@ obj_dump(VALUE obj, yajl_gen gen)
         yajl_gen_cstr(gen, "class_name");
         VALUE name = rb_classname(RBASIC(obj)->klass);
         if (RTEST(name))
-          yajl_gen_cstr(gen, RSTRING(name)->ptr);
+          yajl_gen_cstr(gen, RSTRING_PTR(name));
         else
           yajl_gen_cstr(gen, 0);
       }
@@ -413,20 +419,20 @@ obj_dump(VALUE obj, yajl_gen gen)
       yajl_gen_cstr(gen, "float");
 
       yajl_gen_cstr(gen, "data");
-      yajl_gen_double(gen, RFLOAT(obj)->value);
+      yajl_gen_double(gen, RFLOAT_VALUE(obj));
       break;
 
     case T_BIGNUM:
       yajl_gen_cstr(gen, "bignum");
 
       yajl_gen_cstr(gen, "negative");
-      yajl_gen_bool(gen, RBIGNUM(obj)->sign == 0);
+      yajl_gen_bool(gen, RBIGNUM_SIGN(obj) == 0);
 
       yajl_gen_cstr(gen, "length");
-      yajl_gen_integer(gen, RBIGNUM(obj)->len);
+      yajl_gen_integer(gen, RBIGNUM_LEN(obj));
 
       yajl_gen_cstr(gen, "data");
-      yajl_gen_string(gen, RBIGNUM(obj)->digits, RBIGNUM(obj)->len);
+      yajl_gen_string(gen, (void *)RBIGNUM_DIGITS(obj), RBIGNUM_LEN(obj));
       break;
 
     case T_MATCH:
@@ -440,37 +446,10 @@ obj_dump(VALUE obj, yajl_gen gen)
       yajl_gen_cstr(gen, "regexp");
 
       yajl_gen_cstr(gen, "length");
-      yajl_gen_integer(gen, RREGEXP(obj)->len);
+      yajl_gen_integer(gen, RREGEXP_SRC_LEN(obj));
 
       yajl_gen_cstr(gen, "data");
-      yajl_gen_cstr(gen, RREGEXP(obj)->str);
-      break;
-
-    case T_SCOPE:
-      yajl_gen_cstr(gen, "scope");
-
-      struct SCOPE *scope = (struct SCOPE *)obj;
-      if (scope->local_tbl) {
-        int i = 1;
-        int n = scope->local_tbl[0];
-        VALUE *list = &scope->local_vars[-1];
-        VALUE cur = *list++;
-
-        yajl_gen_cstr(gen, "node");
-        yajl_gen_value(gen, cur);
-
-        if (n) {
-          yajl_gen_cstr(gen, "variables");
-          yajl_gen_map_open(gen);
-          while (n--) {
-            cur = *list++;
-            yajl_gen_cstr(gen, scope->local_tbl[i] == 95 ? "_" : rb_id2name(scope->local_tbl[i]));
-            yajl_gen_value(gen, cur);
-            i++;
-          }
-          yajl_gen_map_close(gen);
-        }
-      }
+      yajl_gen_cstr(gen, RREGEXP_SRC_PTR(obj));
       break;
 
     case T_NODE:
@@ -498,11 +477,11 @@ obj_dump(VALUE obj, yajl_gen gen)
       yajl_gen_cstr(gen, "string");
 
       yajl_gen_cstr(gen, "length");
-      yajl_gen_integer(gen, RSTRING(obj)->len);
+      yajl_gen_integer(gen, RSTRING_LEN(obj));
 
       if (FL_TEST(obj, ELTS_SHARED|FL_USER3)) {
         yajl_gen_cstr(gen, "shared");
-        yajl_gen_value(gen, RSTRING(obj)->aux.shared);
+        yajl_gen_value(gen, RSTRING(obj)->as.heap.aux.shared);
 
         yajl_gen_cstr(gen, "flags");
         yajl_gen_array_open(gen);
@@ -513,26 +492,7 @@ obj_dump(VALUE obj, yajl_gen gen)
         yajl_gen_array_close(gen);
       } else {
         yajl_gen_cstr(gen, "data");
-        yajl_gen_string(gen, (unsigned char *)RSTRING(obj)->ptr, RSTRING(obj)->len);
-      }
-      break;
-
-    case T_VARMAP:
-      yajl_gen_cstr(gen, "varmap");
-
-      struct RVarmap *vars = (struct RVarmap *)obj;
-
-      if (vars->next) {
-        yajl_gen_cstr(gen, "next");
-        yajl_gen_value(gen, (VALUE)vars->next);
-      }
-
-      if (vars->id) {
-        yajl_gen_cstr(gen, "data");
-        yajl_gen_map_open(gen);
-        yajl_gen_cstr(gen, rb_id2name(vars->id));
-        yajl_gen_value(gen, vars->val);
-        yajl_gen_map_close(gen);
+        yajl_gen_string(gen, (unsigned char *)RSTRING_PTR(obj), RSTRING_LEN(obj));
       }
       break;
 
@@ -544,17 +504,17 @@ obj_dump(VALUE obj, yajl_gen gen)
       yajl_gen_cstr(gen, "name");
       VALUE name = rb_classname(obj);
       if (RTEST(name))
-        yajl_gen_cstr(gen, RSTRING(name)->ptr);
+        yajl_gen_cstr(gen, RSTRING_PTR(name));
       else
         yajl_gen_cstr(gen, 0);
 
       yajl_gen_cstr(gen, "super");
-      yajl_gen_value(gen, RCLASS(obj)->super);
+      yajl_gen_value(gen, RCLASS_SUPER(obj));
 
       yajl_gen_cstr(gen, "super_name");
-      VALUE super_name = rb_classname(RCLASS(obj)->super);
+      VALUE super_name = rb_classname(RCLASS_SUPER(obj));
       if (RTEST(super_name))
-        yajl_gen_cstr(gen, RSTRING(super_name)->ptr);
+        yajl_gen_cstr(gen, RSTRING_PTR(super_name));
       else
         yajl_gen_cstr(gen, 0);
 
@@ -563,10 +523,10 @@ obj_dump(VALUE obj, yajl_gen gen)
         yajl_gen_bool(gen, 1);
       }
 
-      if (RCLASS(obj)->iv_tbl && RCLASS(obj)->iv_tbl->num_entries) {
+      if (RCLASS_IV_TBL(obj) && RCLASS_IV_TBL(obj)->num_entries) {
         yajl_gen_cstr(gen, "ivars");
         yajl_gen_map_open(gen);
-        st_foreach(RCLASS(obj)->iv_tbl, each_ivar, (st_data_t)gen);
+        st_foreach(RCLASS_IV_TBL(obj), each_ivar, (st_data_t)gen);
         yajl_gen_map_close(gen);
       }
 
@@ -589,10 +549,10 @@ obj_dump(VALUE obj, yajl_gen gen)
 
       struct RClass *klass = RCLASS(obj);
 
-      if (klass->iv_tbl && klass->iv_tbl->num_entries) {
+      if (RCLASS_IV_TBL(klass) && RCLASS_IV_TBL(klass)->num_entries) {
         yajl_gen_cstr(gen, "ivars");
         yajl_gen_map_open(gen);
-        st_foreach(klass->iv_tbl, each_ivar, (st_data_t)gen);
+        st_foreach(RCLASS_IV_TBL(klass), each_ivar, (st_data_t)gen);
         yajl_gen_map_close(gen);
       }
       break;
@@ -603,17 +563,17 @@ obj_dump(VALUE obj, yajl_gen gen)
       struct RArray *ary = RARRAY(obj);
 
       yajl_gen_cstr(gen, "length");
-      yajl_gen_integer(gen, ary->len);
+      yajl_gen_integer(gen, RARRAY_LEN(ary));
 
       if (FL_TEST(obj, ELTS_SHARED)) {
         yajl_gen_cstr(gen, "shared");
-        yajl_gen_value(gen, ary->aux.shared);
-      } else if (ary->len) {
+        yajl_gen_value(gen, ary->as.heap.aux.shared);
+      } else if (RARRAY_LEN(ary)) {
         yajl_gen_cstr(gen, "data");
         yajl_gen_array_open(gen);
         int i;
-        for(i=0; i < ary->len; i++)
-          yajl_gen_value(gen, ary->ptr[i]);
+        for(i=0; i < RARRAY_LEN(ary); i++)
+          yajl_gen_value(gen, RARRAY_PTR(ary)[i]);
         yajl_gen_array_close(gen);
       }
       break;
@@ -624,20 +584,38 @@ obj_dump(VALUE obj, yajl_gen gen)
       struct RHash *hash = RHASH(obj);
 
       yajl_gen_cstr(gen, "length");
-      if (hash->tbl)
-        yajl_gen_integer(gen, hash->tbl->num_entries);
+      if (hash->ntbl)
+        yajl_gen_integer(gen, RHASH_SIZE(hash));
       else
         yajl_gen_integer(gen, 0);
 
       yajl_gen_cstr(gen, "default");
       yajl_gen_value(gen, hash->ifnone);
 
-      if (hash->tbl && hash->tbl->num_entries) {
+      if (hash->ntbl && RHASH_SIZE(hash)) {
         yajl_gen_cstr(gen, "data");
         yajl_gen_map_open(gen);
-        st_foreach(hash->tbl, each_hash_entry, (st_data_t)gen);
+        st_foreach(hash->ntbl, each_hash_entry, (st_data_t)gen);
         yajl_gen_map_close(gen);
       }
+      break;
+
+    case T_RATIONAL:
+      yajl_gen_cstr(gen, "rational");
+      struct RRational *rat = RRATIONAL(obj);
+      yajl_gen_cstr(gen, "num");
+      yajl_gen_value(gen, rat->num);
+      yajl_gen_cstr(gen, "den");
+      yajl_gen_value(gen, rat->den);
+      break;
+
+    case T_COMPLEX:
+      yajl_gen_cstr(gen, "complex");
+      struct RComplex *comp = RCOMPLEX(obj);
+      yajl_gen_cstr(gen, "real");
+      yajl_gen_value(gen, comp->real);
+      yajl_gen_cstr(gen, "imag");
+      yajl_gen_value(gen, comp->imag);
       break;
 
     default:
@@ -827,6 +805,7 @@ hook_freelist(int entry)
     /* XXX continue or exit? */
   }
 
+  /* XXX this needs to change for 19 */
   freelist = bin_find_symbol("freelist", NULL);
   if (!freelist) {
     fprintf(stderr, "Couldn't find freelist!\n");
