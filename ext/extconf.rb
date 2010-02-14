@@ -10,6 +10,7 @@ if RUBY_VERSION >= "1.9"
   begin
     require 'ruby_core_source'
   rescue LoadError
+    retry if require 'rubygems'
     STDERR.puts "\n\n"
     STDERR.puts "***************************************************************************************"
     STDERR.puts "******************** PLEASE RUN gem install ruby_core_source FIRST ********************"
@@ -30,13 +31,6 @@ def sys(cmd)
   end
   ret
 end
-
-hdrs = proc {
-  have_header("vm_core.h") and
-  have_header("iseq.h") and
-  have_header("insns.inc") and
-  have_header("insns_info.inc")
-}
 
 ###
 # yajl
@@ -165,7 +159,17 @@ end
 add_define "_ARCH_#{arch}_"
 
 if is_elf or is_macho
-  Ruby_core_source::create_makefile_with_core(hdrs, "memprof")
+  if RUBY_VERSION >= "1.9"
+    hdrs = proc {
+      have_header("vm_core.h") and
+      have_header("iseq.h") and
+      have_header("insns.inc") and
+      have_header("insns_info.inc")
+    }
+    Ruby_core_source::create_makefile_with_core(hdrs, "memprof")
+  else
+    create_makefile("memprof")
+  end
 else
   raise 'unsupported platform'
 end
