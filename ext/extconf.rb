@@ -73,6 +73,35 @@ def add_define(name)
   $defs.push("-D#{name}")
 end
 
+libjudy = File.basename('judy-1.0.5.tar.gz')
+dir = File.basename(libjudy, '.tar.gz')
+
+unless File.exists?("#{CWD}/dst/lib/libJudy.a")
+  puts "(I'm about to compile libJudy... this will definitely take a while)"
+  Dir.chdir('src') do
+    FileUtils.rm_rf(dir) if File.exists?(dir)
+
+    sys("tar zxvf #{libjudy}")
+    Dir.chdir(dir) do
+      ENV['CFLAGS'] = '-fPIC'
+      sys("./configure --prefix=#{CWD}/dst --disable-shared")
+      sys("make")
+      sys("make install")
+    end
+  end
+
+  Dir.chdir('dst/lib') do
+    FileUtils.ln_s 'libJudy.a', 'libjudy_ext.a'
+  end
+end
+
+$LIBPATH.unshift "#{CWD}/dst/lib"
+$INCFLAGS[0,0] = "-I#{CWD}/dst/include "
+
+unless have_library('judy_ext') and have_header('Judy.h')
+  raise 'libJudy build failed'
+end
+
 if RUBY_PLATFORM =~ /linux/
   ###
   # libelf

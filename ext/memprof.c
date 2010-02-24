@@ -15,7 +15,7 @@
 #include <sys/mman.h>
 #include <err.h>
 
-#include <st.h>
+#include <Judy.h>
 #include <intern.h>
 #include <node.h>
 
@@ -42,11 +42,17 @@ struct inline_tramp_st2_entry *inline_tramp_table = NULL;
  */
 static VALUE eUnsupported;
 static int track_objs = 0;
-static st_table *objs = NULL;
+static Pvoid_t objs = NULL;
+static Pvoid_t files = NULL;
+
+struct file_info {
+  char *filename;
+  size_t refcnt;
+};
 
 struct obj_track {
   VALUE obj;
-  char *source;
+  struct file_info *file_info;
   int line;
 };
 
@@ -55,26 +61,45 @@ newobj_tramp()
 {
   VALUE ret = rb_newobj();
   struct obj_track *tracker = NULL;
+  Word_t *tmp = NULL;
+  char *file = NULL;
 
-  if (track_objs && objs) {
+  if (track_objs) {
     tracker = malloc(sizeof(*tracker));
 
     if (tracker) {
       if (ruby_current_node && ruby_current_node->nd_file && *ruby_current_node->nd_file) {
-        tracker->source = strdup(ruby_current_node->nd_file);
+        file = ruby_current_node->nd_file;
         tracker->line = nd_line(ruby_current_node);
       } else if (ruby_sourcefile) {
-        tracker->source = strdup(ruby_sourcefile);
+        file = ruby_sourcefile;
         tracker->line = ruby_sourceline;
       } else {
-        tracker->source = strdup("__null__");
+        file = "__null__";
         tracker->line = 0;
       }
 
+      JSLG(tmp, files, file);
+      if (tmp == NULL) {
+        tracker->file_info = malloc(sizeof(*(tracker->file_info)));
+        tracker->file_info->filename = strdup(file);
+        tracker->file_info->refcnt = 1;
+        JSLI(tmp, files, file);
+        if (tmp) {
+          *tmp = (Word_t)tracker->file_info;
+        }
+      } else {
+        tracker->file_info = (struct file_info *)*tmp;
+        tracker->file_info->refcnt++;
+      }
+
       tracker->obj = ret;
-      rb_gc_disable();
-      st_insert(objs, (st_data_t)ret, (st_data_t)tracker);
-      rb_gc_enable();
+      JLI(tmp, objs, ret);
+      if (tmp == PJERR) {
+        fprintf(stderr, "Unable to insert tracker into the table!\n");
+      } else  {
+        *tmp = (Word_t)tracker;
+      }
     } else {
       fprintf(stderr, "Warning, unable to allocate a tracker. You are running dangerously low on RAM!\n");
     }
@@ -87,26 +112,24 @@ static void
 freelist_tramp(unsigned long rval)
 {
   struct obj_track *tracker = NULL;
-  if (track_objs && objs) {
-    st_delete(objs, (st_data_t *) &rval, (st_data_t *) &tracker);
-    if (tracker) {
-      free(tracker->source);
+  Word_t *val;
+  int ret;
+  if (track_objs) {
+    JLG(val, objs, rval);
+    if (val && (tracker = (struct obj_track *)*val)) {
+      tracker->file_info->refcnt--;
+      if (tracker->file_info->refcnt == 0) {
+        free(tracker->file_info->filename);
+        free(tracker->file_info);
+      }
       free(tracker);
     }
+    JLD(ret, objs, rval);
   }
 }
 
 static int
-objs_free(st_data_t key, st_data_t record, st_data_t arg)
-{
-  struct obj_track *tracker = (struct obj_track *)record;
-  free(tracker->source);
-  free(tracker);
-  return ST_DELETE;
-}
-
-static int
-objs_tabulate(st_data_t key, st_data_t record, st_data_t arg)
+objs_tabulate(st_data_t key, st_data_t record, st_table *arg)
 {
   st_table *table = (st_table *)arg;
   struct obj_track *tracker = (struct obj_track *)record;
@@ -135,7 +158,7 @@ objs_tabulate(st_data_t key, st_data_t record, st_data_t arg)
       }
   }
 
-  asprintf(&source_key, "%s:%d:%s", tracker->source, tracker->line, type);
+  asprintf(&source_key, "%s:%d:%s", tracker->file_info->filename, tracker->line, type);
   st_lookup(table, (st_data_t)source_key, (st_data_t *)&count);
   if (st_insert(table, (st_data_t)source_key, ++count)) {
     free(source_key);
@@ -175,11 +198,13 @@ memprof_start(VALUE self)
 static VALUE
 memprof_stop(VALUE self)
 {
+  int ret = 0;
   if (track_objs == 0)
     return Qfalse;
 
   track_objs = 0;
-  st_foreach(objs, objs_free, (st_data_t)0);
+  JLFA(ret, objs);
+
   return Qtrue;
 }
 
@@ -199,7 +224,7 @@ memprof_stats(int argc, VALUE *argv, VALUE self)
   int i;
   VALUE str;
   FILE *out = NULL;
-
+  Word_t *val, index;
   if (!track_objs)
     rb_raise(rb_eRuntimeError, "object tracking disabled, call Memprof.start first");
 
@@ -214,7 +239,14 @@ memprof_stats(int argc, VALUE *argv, VALUE self)
   track_objs = 0;
 
   tmp_table = st_init_strtable();
-  st_foreach(objs, objs_tabulate, (st_data_t)tmp_table);
+ 
+  index = 0;
+  JLF(val, objs, index);
+  while (val != NULL)
+  {
+    objs_tabulate(index, *val, tmp_table);
+    JLN(val, objs, index);
+  }
 
   res.num_entries = 0;
   res.entries = malloc(sizeof(char*) * tmp_table->num_entries);
@@ -240,8 +272,9 @@ memprof_stats(int argc, VALUE *argv, VALUE self)
 static VALUE
 memprof_stats_bang(int argc, VALUE *argv, VALUE self)
 {
+  int ret = 0;
   memprof_stats(argc, argv, self);
-  st_foreach(objs, objs_free, (st_data_t)0);
+  JLFA(ret, objs);
   return Qnil;
 }
 
@@ -383,6 +416,7 @@ static VALUE (*rb_classname)(VALUE);
 void
 obj_dump(VALUE obj, yajl_gen gen)
 {
+  Word_t *val;
   int type;
   yajl_gen_map_open(gen);
 
@@ -390,9 +424,10 @@ obj_dump(VALUE obj, yajl_gen gen)
   yajl_gen_value(gen, obj);
 
   struct obj_track *tracker = NULL;
-  if (st_lookup(objs, (st_data_t)obj, (st_data_t *)&tracker)) {
+  JLG(val, objs, obj);
+  if (val && (tracker = (struct obj_track *)*val)) {
     yajl_gen_cstr(gen, "source");
-    yajl_gen_format(gen, "%s:%d", tracker->source, tracker->line);
+    yajl_gen_format(gen, "%s:%d", tracker->file_info->filename, tracker->line);
   }
 
   yajl_gen_cstr(gen, "type");
@@ -661,7 +696,7 @@ obj_dump(VALUE obj, yajl_gen gen)
 }
 
 static int
-objs_each_dump(st_data_t key, st_data_t record, st_data_t arg)
+objs_each_dump(st_data_t key, st_data_t record, yajl_gen arg)
 {
   obj_dump((VALUE)key, (yajl_gen)arg);
   return ST_CONTINUE;
@@ -683,6 +718,7 @@ memprof_dump(int argc, VALUE *argv, VALUE self)
 {
   VALUE str;
   FILE *out = NULL;
+  Word_t *val, index;
 
   if (!track_objs)
     rb_raise(rb_eRuntimeError, "object tracking disabled, call Memprof.start first");
@@ -701,7 +737,13 @@ memprof_dump(int argc, VALUE *argv, VALUE self)
   track_objs = 0;
 
   yajl_gen_array_open(gen);
-  st_foreach(objs, objs_each_dump, (st_data_t)gen);
+  index = 0;
+  JLF(val, objs, index);
+  while (val != NULL) {
+    objs_each_dump(index, *val, gen);
+    JLN(val, objs, index);
+  }
+
   yajl_gen_array_close(gen);
   yajl_gen_free(gen);
 
@@ -901,7 +943,6 @@ Init_memprof()
   rb_define_singleton_method(memprof, "dump_all", memprof_dump_all, -1);
 
   pagesize = getpagesize();
-  objs = st_init_numtable();
   bin_init();
   create_tramp_table();
 
