@@ -56,6 +56,24 @@ struct obj_track {
 static struct obj_track *tracker_freelist = NULL;
 static int tracker_freelist_count = 0;
 
+static VALUE gc_hook;
+static void (*mark_source_filename)(char*);
+
+static int
+sourcefile_mark_each(mp_data_t key, mp_data_t val, mp_data_t arg)
+{
+  struct obj_track *tracker = (struct obj_track *)val;
+  if (tracker->source)
+    mark_source_filename(tracker->source);
+  return MP_CONTINUE;
+}
+
+static void
+sourcefile_marker()
+{
+  mp_foreach(objs, sourcefile_mark_each, (mp_data_t)NULL);
+}
+
 static VALUE
 newobj_tramp()
 {
@@ -73,13 +91,13 @@ newobj_tramp()
 
     if (tracker) {
       if (ruby_current_node && ruby_current_node->nd_file && *ruby_current_node->nd_file) {
-        tracker->source = strdup(ruby_current_node->nd_file);
+        tracker->source = ruby_current_node->nd_file;
         tracker->line = nd_line(ruby_current_node);
       } else if (ruby_sourcefile) {
-        tracker->source = strdup(ruby_sourcefile);
+        tracker->source = ruby_sourcefile;
         tracker->line = ruby_sourceline;
       } else {
-        tracker->source = strdup("__null__");
+        tracker->source = NULL;
         tracker->line = 0;
       }
 
@@ -108,7 +126,6 @@ freelist_tramp(unsigned long rval)
   if (track_objs && objs) {
     mp_delete(objs, (mp_data_t *) &rval, (mp_data_t *) &tracker);
     if (tracker) {
-      free(tracker->source);
       if (tracker_freelist_count < MAX_FREE_TRACKERS) {
         tracker->next = tracker_freelist;
         tracker_freelist = tracker;
@@ -124,7 +141,6 @@ static int
 objs_free(mp_data_t key, mp_data_t record, mp_data_t arg)
 {
   struct obj_track *tracker = (struct obj_track *)record;
-  free(tracker->source);
   free(tracker);
   return MP_DELETE;
 }
@@ -160,7 +176,7 @@ objs_tabulate(mp_data_t key, mp_data_t record, mp_data_t arg)
       }
   }
 
-  asprintf(&source_key, "%s:%d:%s", tracker->source, tracker->line, type);
+  asprintf(&source_key, "%s:%d:%s", tracker->source ? tracker->source : "__null__", tracker->line, type);
   mp_lookup(table, (mp_data_t)source_key, (mp_data_t *)&count);
   if (mp_insert(table, (mp_data_t)source_key, ++count)) {
     free(source_key);
@@ -952,6 +968,13 @@ Init_memprof()
   bin_init();
   create_tramp_table();
   rb_add_freelist = NULL;
+
+  mark_source_filename = bin_find_symbol("mark_source_filename", 0);
+  if (!mark_source_filename)
+    errx(EX_SOFTWARE, "Unable to find mark_source_filename");
+
+  gc_hook = Data_Wrap_Struct(rb_cObject, sourcefile_marker, NULL, NULL);
+  rb_global_variable(&gc_hook);
 
   insert_tramp("rb_newobj", newobj_tramp);
   insert_tramp("add_freelist", freelist_tramp);
