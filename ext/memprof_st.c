@@ -135,6 +135,35 @@ stat_col()
 }
 #endif
 
+#define MAX_FREELIST 10000
+
+mp_table_entry*
+get_new_entry(mp_table *table) {
+  mp_table_entry *ret;
+
+  if (table->freelist) {
+    ret = table->freelist;
+    table->freelist = table->freelist->next;
+    table->freelist_entries--;
+  } else {
+    ret = alloc(mp_table_entry);
+  }
+
+  return ret;
+}
+
+void
+free_entry(mp_table *table, mp_table_entry *entry) {
+  if (table->freelist_entries >= MAX_FREELIST) {
+    free(entry);
+    return;
+  }
+
+  entry->next = table->freelist;
+  table->freelist = entry;
+  table->freelist_entries++;
+}
+
 mp_table*
 mp_init_table_with_size(type, size)
     struct mp_hash_type *type;
@@ -156,6 +185,8 @@ mp_init_table_with_size(type, size)
     tbl->num_entries = 0;
     tbl->num_bins = size;
     tbl->bins = (mp_table_entry **)Calloc(size, sizeof(mp_table_entry*));
+    tbl->freelist = NULL;
+    tbl->freelist_entries = 0;
 
     return tbl;
 }
@@ -208,6 +239,15 @@ mp_free_table(table)
 	    ptr = next;
 	}
     }
+
+    ptr = table->freelist;
+
+    while (ptr != 0) {
+	    next = ptr->next;
+	    free(ptr);
+	    ptr = next;
+    }
+
     free(table->bins);
     free(table);
 }
@@ -262,7 +302,7 @@ do {\
         bin_pos = hash_val % table->num_bins;\
     }\
     \
-    entry = alloc(mp_table_entry);\
+    entry = get_new_entry(table);\
     \
     entry->hash = hash_val;\
     entry->key = key;\
@@ -397,7 +437,7 @@ mp_delete(table, key, value)
 	table->num_entries--;
 	if (value != 0) *value = ptr->record;
 	*key = ptr->key;
-	free(ptr);
+	free_entry(table, ptr);
 	return 1;
     }
 
@@ -408,7 +448,7 @@ mp_delete(table, key, value)
 	    table->num_entries--;
 	    if (value != 0) *value = tmp->record;
 	    *key = tmp->key;
-	    free(tmp);
+	    free_entry(table, tmp);
 	    return 1;
 	}
     }
@@ -508,7 +548,7 @@ mp_foreach(table, func, arg)
 		    last->next = ptr->next;
 		}
 		ptr = ptr->next;
-		free(tmp);
+		free_entry(table, tmp);
 		table->num_entries--;
 	    }
 	}

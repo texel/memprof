@@ -28,6 +28,8 @@ struct mp_table {
     int num_bins;
     int num_entries;
     struct mp_table_entry **bins;
+    struct mp_table_entry *freelist;
+    int freelist_entries;
 };
 
 #define mp_is_member(table,key) mp_lookup(table,key,(mp_data_t *)0)
