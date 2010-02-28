@@ -2,37 +2,37 @@
 
 /* @(#) st.h 5.1 89/12/14 */
 
-#ifndef ST_INCLUDED
+#ifndef MP_INCLUDED
 
-#define ST_INCLUDED
+#define MP_INCLUDED
 
 #if SIZEOF_LONG == SIZEOF_VOIDP
-typedef unsigned long st_data_t;
+typedef unsigned long mp_data_t;
 #elif SIZEOF_LONG_LONG == SIZEOF_VOIDP
-typedef unsigned LONG_LONG st_data_t;
+typedef unsigned LONG_LONG mp_data_t;
 #else
 # error ---->> st.c requires sizeof(void*) == sizeof(long) to be compiled. <<---
 -
 #endif
-#define ST_DATA_T_DEFINED
+#define MP_DATA_T_DEFINED
 
-typedef struct st_table st_table;
+typedef struct mp_table mp_table;
 
-struct st_hash_type {
+struct mp_hash_type {
     int (*compare)();
     int (*hash)();
 };
 
-struct st_table {
-    struct st_hash_type *type;
+struct mp_table {
+    struct mp_hash_type *type;
     int num_bins;
     int num_entries;
-    struct st_table_entry **bins;
+    struct mp_table_entry **bins;
 };
 
-#define st_is_member(table,key) st_lookup(table,key,(st_data_t *)0)
+#define mp_is_member(table,key) mp_lookup(table,key,(mp_data_t *)0)
 
-enum st_retval {ST_CONTINUE, ST_STOP, ST_DELETE, ST_CHECK};
+enum mp_retval {MP_CONTINUE, MP_STOP, MP_DELETE, MP_CHECK};
 
 #ifndef _
 # define _(args) args
@@ -45,28 +45,28 @@ enum st_retval {ST_CONTINUE, ST_STOP, ST_DELETE, ST_CHECK};
 # endif
 #endif
 
-st_table *st_init_table _((struct st_hash_type *));
-st_table *st_init_table_with_size _((struct st_hash_type *, int));
-st_table *st_init_numtable _((void));
-st_table *st_init_numtable_with_size _((int));
-st_table *st_init_strtable _((void));
-st_table *st_init_strtable_with_size _((int));
-int st_delete _((st_table *, st_data_t *, st_data_t *));
-int st_delete_safe _((st_table *, st_data_t *, st_data_t *, st_data_t));
-int st_insert _((st_table *, st_data_t, st_data_t));
-int st_lookup _((st_table *, st_data_t, st_data_t *));
-int st_foreach _((st_table *, int (*)(ANYARGS), st_data_t));
-void st_add_direct _((st_table *, st_data_t, st_data_t));
-void st_free_table _((st_table *));
-void st_cleanup_safe _((st_table *, st_data_t));
-st_table *st_copy _((st_table *));
+mp_table *mp_init_table _((struct mp_hash_type *));
+mp_table *mp_init_table_with_size _((struct mp_hash_type *, int));
+mp_table *mp_init_numtable _((void));
+mp_table *mp_init_numtable_with_size _((int));
+mp_table *mp_init_strtable _((void));
+mp_table *mp_init_strtable_with_size _((int));
+int mp_delete _((mp_table *, mp_data_t *, mp_data_t *));
+int mp_delete_safe _((mp_table *, mp_data_t *, mp_data_t *, mp_data_t));
+int mp_insert _((mp_table *, mp_data_t, mp_data_t));
+int mp_lookup _((mp_table *, mp_data_t, mp_data_t *));
+int mp_foreach _((mp_table *, int (*)(ANYARGS), mp_data_t));
+void mp_add_direct _((mp_table *, mp_data_t, mp_data_t));
+void mp_free_table _((mp_table *));
+void mp_cleanup_safe _((mp_table *, mp_data_t));
+mp_table *mp_copy _((mp_table *));
 
-#define ST_NUMCMP	((int (*)()) 0)
-#define ST_NUMHASH	((int (*)()) -2)
+#define MP_NUMCMP	((int (*)()) 0)
+#define MP_NUMHASH	((int (*)()) -2)
 
-#define st_numcmp	ST_NUMCMP
-#define st_numhash	ST_NUMHASH
+#define mp_numcmp MP_NUMCMP
+#define mp_numhash  MP_NUMHASH
 
-int st_strhash();
+int mp_strhash();
 
-#endif /* ST_INCLUDED */
+#endif /* MP_INCLUDED */
