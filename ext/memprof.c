@@ -47,7 +47,6 @@ static int track_objs = 0;
 static mp_table *objs = NULL;
 
 struct obj_track {
-  VALUE obj;
   char *source;
   int line;
   struct obj_track *next;
@@ -84,7 +83,6 @@ newobj_tramp()
         tracker->line = 0;
       }
 
-      tracker->obj = ret;
       rb_gc_disable();
       mp_insert(objs, (mp_data_t)ret, (mp_data_t)tracker);
       rb_gc_enable();
@@ -136,11 +134,12 @@ objs_tabulate(mp_data_t key, mp_data_t record, mp_data_t arg)
 {
   mp_table *table = (mp_table *)arg;
   struct obj_track *tracker = (struct obj_track *)record;
+  VALUE obj = (VALUE) key;
   char *source_key = NULL;
   unsigned long count = 0;
   char *type = NULL;
 
-  switch (TYPE(tracker->obj)) {
+  switch (TYPE(obj)) {
     case T_NONE:
       type = "__none__"; break;
     case T_BLKTAG:
@@ -154,8 +153,8 @@ objs_tabulate(mp_data_t key, mp_data_t record, mp_data_t arg)
     case T_NODE:
       type = "__node__"; break;
     default:
-      if (RBASIC(tracker->obj)->klass) {
-        type = (char*) rb_obj_classname(tracker->obj);
+      if (RBASIC(obj)->klass) {
+        type = (char*) rb_obj_classname(obj);
       } else {
         type = "__unknown__";
       }
