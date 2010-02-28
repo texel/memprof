@@ -22,6 +22,7 @@
 
 #include "arch.h"
 #include "bin_api.h"
+#include "memprof_st.h"
 
 
 size_t pagesize;
@@ -43,7 +44,7 @@ struct inline_tramp_st2_entry *inline_tramp_table = NULL;
  */
 static VALUE eUnsupported;
 static int track_objs = 0;
-static st_table *objs = NULL;
+static mp_table *objs = NULL;
 
 struct obj_track {
   VALUE obj;
@@ -74,7 +75,7 @@ newobj_tramp()
 
       tracker->obj = ret;
       rb_gc_disable();
-      st_insert(objs, (st_data_t)ret, (st_data_t)tracker);
+      mp_insert(objs, (mp_data_t)ret, (mp_data_t)tracker);
       rb_gc_enable();
     } else {
       fprintf(stderr, "Warning, unable to allocate a tracker. You are running dangerously low on RAM!\n");
@@ -96,7 +97,7 @@ freelist_tramp(unsigned long rval)
   }
 
   if (track_objs && objs) {
-    st_delete(objs, (st_data_t *) &rval, (st_data_t *) &tracker);
+    mp_delete(objs, (mp_data_t *) &rval, (mp_data_t *) &tracker);
     if (tracker) {
       free(tracker->source);
       free(tracker);
@@ -105,18 +106,18 @@ freelist_tramp(unsigned long rval)
 }
 
 static int
-objs_free(st_data_t key, st_data_t record, st_data_t arg)
+objs_free(mp_data_t key, mp_data_t record, mp_data_t arg)
 {
   struct obj_track *tracker = (struct obj_track *)record;
   free(tracker->source);
   free(tracker);
-  return ST_DELETE;
+  return MP_DELETE;
 }
 
 static int
-objs_tabulate(st_data_t key, st_data_t record, st_data_t arg)
+objs_tabulate(mp_data_t key, mp_data_t record, mp_data_t arg)
 {
-  st_table *table = (st_table *)arg;
+  mp_table *table = (mp_table *)arg;
   struct obj_track *tracker = (struct obj_track *)record;
   char *source_key = NULL;
   unsigned long count = 0;
@@ -144,12 +145,12 @@ objs_tabulate(st_data_t key, st_data_t record, st_data_t arg)
   }
 
   asprintf(&source_key, "%s:%d:%s", tracker->source, tracker->line, type);
-  st_lookup(table, (st_data_t)source_key, (st_data_t *)&count);
-  if (st_insert(table, (st_data_t)source_key, ++count)) {
+  mp_lookup(table, (mp_data_t)source_key, (mp_data_t *)&count);
+  if (mp_insert(table, (mp_data_t)source_key, ++count)) {
     free(source_key);
   }
 
-  return ST_CONTINUE;
+  return MP_CONTINUE;
 }
 
 struct results {
@@ -158,7 +159,7 @@ struct results {
 };
 
 static int
-objs_to_array(st_data_t key, st_data_t record, st_data_t arg)
+objs_to_array(mp_data_t key, mp_data_t record, mp_data_t arg)
 {
   struct results *res = (struct results *)arg;
   unsigned long count = (unsigned long)record;
@@ -167,7 +168,7 @@ objs_to_array(st_data_t key, st_data_t record, st_data_t arg)
   asprintf(&(res->entries[res->num_entries++]), "%7li %s", count, source);
 
   free(source);
-  return ST_DELETE;
+  return MP_DELETE;
 }
 
 static VALUE
@@ -187,7 +188,7 @@ memprof_stop(VALUE self)
     return Qfalse;
 
   track_objs = 0;
-  st_foreach(objs, objs_free, (st_data_t)0);
+  mp_foreach(objs, objs_free, (mp_data_t)0);
   return Qtrue;
 }
 
@@ -202,7 +203,7 @@ memprof_strcmp(const void *obj1, const void *obj2)
 static VALUE
 memprof_stats(int argc, VALUE *argv, VALUE self)
 {
-  st_table *tmp_table;
+  mp_table *tmp_table;
   struct results res;
   int i;
   VALUE str;
@@ -221,14 +222,14 @@ memprof_stats(int argc, VALUE *argv, VALUE self)
 
   track_objs = 0;
 
-  tmp_table = st_init_strtable();
-  st_foreach(objs, objs_tabulate, (st_data_t)tmp_table);
+  tmp_table = mp_init_strtable();
+  mp_foreach(objs, objs_tabulate, (mp_data_t)tmp_table);
 
   res.num_entries = 0;
   res.entries = malloc(sizeof(char*) * tmp_table->num_entries);
 
-  st_foreach(tmp_table, objs_to_array, (st_data_t)&res);
-  st_free_table(tmp_table);
+  mp_foreach(tmp_table, objs_to_array, (mp_data_t)&res);
+  mp_free_table(tmp_table);
 
   qsort(res.entries, res.num_entries, sizeof(char*), &memprof_strcmp);
 
@@ -249,7 +250,7 @@ static VALUE
 memprof_stats_bang(int argc, VALUE *argv, VALUE self)
 {
   memprof_stats(argc, argv, self);
-  st_foreach(objs, objs_free, (st_data_t)0);
+  mp_foreach(objs, objs_free, (mp_data_t)0);
   return Qnil;
 }
 
@@ -398,7 +399,7 @@ obj_dump(VALUE obj, yajl_gen gen)
   yajl_gen_value(gen, obj);
 
   struct obj_track *tracker = NULL;
-  if (st_lookup(objs, (st_data_t)obj, (st_data_t *)&tracker) && BUILTIN_TYPE(obj) != T_NODE) {
+  if (mp_lookup(objs, (mp_data_t)obj, (mp_data_t *)&tracker) && BUILTIN_TYPE(obj) != T_NODE) {
     yajl_gen_cstr(gen, "file");
     yajl_gen_cstr(gen, tracker->source);
     yajl_gen_cstr(gen, "line");
@@ -671,10 +672,10 @@ obj_dump(VALUE obj, yajl_gen gen)
 }
 
 static int
-objs_each_dump(st_data_t key, st_data_t record, st_data_t arg)
+objs_each_dump(mp_data_t key, mp_data_t record, mp_data_t arg)
 {
   obj_dump((VALUE)key, (yajl_gen)arg);
-  return ST_CONTINUE;
+  return MP_CONTINUE;
 }
 
 void
@@ -711,7 +712,7 @@ memprof_dump(int argc, VALUE *argv, VALUE self)
   track_objs = 0;
 
   yajl_gen_array_open(gen);
-  st_foreach(objs, objs_each_dump, (st_data_t)gen);
+  mp_foreach(objs, objs_each_dump, (mp_data_t)gen);
   yajl_gen_array_close(gen);
   yajl_gen_free(gen);
 
@@ -931,7 +932,7 @@ Init_memprof()
   rb_define_singleton_method(memprof, "dump_all", memprof_dump_all, -1);
 
   pagesize = getpagesize();
-  objs = st_init_numtable();
+  objs = mp_init_numtable();
   bin_init();
   create_tramp_table();
   rb_add_freelist = NULL;
