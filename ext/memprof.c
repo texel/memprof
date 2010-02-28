@@ -50,7 +50,12 @@ struct obj_track {
   VALUE obj;
   char *source;
   int line;
+  struct obj_track *next;
 };
+
+#define MAX_FREE_TRACKERS 10000
+static struct obj_track *tracker_freelist = NULL;
+static int tracker_freelist_count = 0;
 
 static VALUE
 newobj_tramp()
@@ -59,7 +64,13 @@ newobj_tramp()
   struct obj_track *tracker = NULL;
 
   if (track_objs && objs) {
-    tracker = malloc(sizeof(*tracker));
+    if (tracker_freelist) {
+      tracker = tracker_freelist;
+      tracker_freelist = tracker_freelist->next;
+      tracker_freelist_count--;
+    } else {
+      tracker = malloc(sizeof(*tracker));
+    }
 
     if (tracker) {
       if (ruby_current_node && ruby_current_node->nd_file && *ruby_current_node->nd_file) {
@@ -100,7 +111,13 @@ freelist_tramp(unsigned long rval)
     mp_delete(objs, (mp_data_t *) &rval, (mp_data_t *) &tracker);
     if (tracker) {
       free(tracker->source);
-      free(tracker);
+      if (tracker_freelist_count < MAX_FREE_TRACKERS) {
+        tracker->next = tracker_freelist;
+        tracker_freelist = tracker;
+        tracker_freelist_count++;
+      } else {
+        free(tracker);
+      }
     }
   }
 }
