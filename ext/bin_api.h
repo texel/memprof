@@ -3,75 +3,98 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* generic file format stuff */
-extern void *text_segment;
-extern unsigned long text_segment_len;
-extern size_t pagesize;
-
 /*
- *  trampoline specific stuff
+ * Some useful foward declarations for function protoypes here and elsewhere.
  */
-extern struct tramp_tbl_entry *tramp_table;
-extern size_t tramp_size;
+struct tramp_st2_entry;
+struct inline_tramp_st2_entry;
 
 /*
- *  inline trampoline specific stuff
- */
-extern size_t inline_tramp_size;
-extern struct inline_tramp_tbl_entry *inline_tramp_table;
-
-/* trampoline types */
-struct tramp_inline {
-  unsigned char jmp[1];
-  uint32_t displacement;
-  unsigned char pad[1];
-} __attribute__((__packed__));
-
-struct tramp_tbl_entry {
-  unsigned char ebx_save[1];
-  unsigned char mov[1];
-  void *addr;
-  unsigned char calll[2];
-  unsigned char ebx_restore[1];
-  unsigned char ret[1];
-} __attribute__((__packed__));
-
-struct inline_tramp_tbl_entry {
-  unsigned char mov[1];
-  unsigned char src_reg[1];
-  void * mov_addr;
-
-  struct {
-    unsigned char push_ebx[1];
-    unsigned char pushl[2];
-    void * freelist;
-    unsigned char mov_ebx[1];
-    void * fn_addr;
-    unsigned char calll[2];
-    unsigned char pop_ebx[1];
-    unsigned char restore_ebx[1];
-  } __attribute__((__packed__)) frame;
-
-  unsigned char jmp[1];
-  uint32_t jmp_addr;
-} __attribute__((__packed__));
-
-void
-update_callqs(int entry, void *trampee_addr);
-
-/*
- *  EXPORTED API.
+ * bin_init - Initialize the binary format specific layer.
  */
 void
 bin_init();
 
+/*
+ * bin_find_symbol - find a symbol
+ *
+ * Given:
+ *  - sym - a symbol name
+ *  - size - optional out parameter
+ *  - search_libs - 0 to search only ruby/libruby, 1 to search other
+ *    libraries, too.
+ *
+ * This function will search for the symbol sym and return its address if
+ * found, or NULL if the symbol could not be found.
+ *
+ * Optionally, this function will set its out parameter size equal to the
+ * size of the symbol.
+ */
 void *
-bin_find_symbol(char *sym, size_t *size);
+bin_find_symbol(const char *sym, size_t *size, int search_libs);
 
-void
-bin_update_image(int entry, void *trampee_addr);
+/*
+ * bin_find_symbol_name - find a symbol's name
+ *
+ * Given:
+ *  - sym - a symbol address
+ *
+ * This function will search for the symbol sym and return its name if
+ * found, or NULL if the symbol could not be found.
+ */
+const char *
+bin_find_symbol_name(void *sym);
 
+/*
+ * bin_allocate_page - allocate a page suitable for trampolines
+ *
+ * This function will allocate a page of memory in the right area of the
+ * virtual address space and with the appropriate permissions for stage 2
+ * trampoline code to live and execute.
+ */
 void *
-bin_allocate_page();
+bin_allocate_page(void);
 
+/*
+ * bin_type_size - Return size (in bytes) of a given type.
+ *
+ * Given:
+ *  - type - a string representation of a type
+ *
+ * This function will return the size (in bytes) of the type. If no such type
+ * can be found, return 0.
+ */
+size_t
+bin_type_size(const char *type);
+
+/*
+ * bin_type_member_offset - Return the offset (in bytes) of member in type.
+ *
+ * Given:
+ *  - type - a string representation of a type
+ *  - member - a string representation of a field int he type
+ *
+ * This function will return the offset (in bytes) of member in type.
+ *
+ * On failure, this function returns -1.
+ */
+int
+bin_type_member_offset(const char *type, const char *member);
+
+/*
+ * bin_update_image - Update a binary image in memory
+ *
+ * Given:
+ *  - trampee - the name of the symbol to hook
+ *  - tramp - the stage 2 trampoline entry
+ *  - orig_func - out parameter storing the address of the function that was
+ *    originally being called.
+ *
+ * this function will update the binary image so that all calls to trampee will
+ * be routed to tramp.
+ *
+ * Returns 0 on success.
+ */
+int
+bin_update_image(const char *trampee, struct tramp_st2_entry *tramp, void **orig_func);
 #endif

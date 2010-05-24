@@ -1,0 +1,176 @@
+#!/usr/bin/env ruby
+
+require 'rubygems'
+require 'optparse'
+require 'restclient'
+require 'term/ansicolor'
+
+MEMPROF_URL = "https://memprof.com/upload"
+
+MEMPROF_BANNER = <<-EOF
+Memprof Uploader
+http://www.memprof.com
+======================
+
+EOF
+
+class MemprofUploader
+  include Term::ANSIColor
+
+  def initialize(args=ARGV)
+    puts MEMPROF_BANNER
+
+    @parser = OptionParser.new do |opts|
+      opts.banner = "Usage:"
+      opts.on("-p", "--pid <pid>", Integer, "PID of the process to dump       (required)")      {|arg| @pid = arg }
+      opts.on("-n", "--name <name>",        "Name for your dump               (required)")      {|arg| @name = arg }
+      opts.on("-k", "--key <key>",          "Memprof.com API key              (required)")      {|arg| @key = arg }
+      opts.on("-d", "--[no-]delete",        "Delete dump file after uploading (default true)")  {|arg| @delete_dump = arg }
+      opts.on("-s", "--seconds <seconds>",
+                    Integer,                "Seconds to wait for the dump     (default 300)")   {|arg| @secs = arg }
+      opts.on("-t", "--[no-]test",          "Test run (don't actually upload) (default false)") {|arg| @test = arg }
+      opts.on("-f", "--file <path>",        "Upload specific json dump        (optional)")      {|arg| @file = arg }
+      opts.on("--put-my-data-on-the-internet",  "Confirm that you understand\n" +
+                                                "memprof.com will show all your            \n".rjust(80) +
+                                                "internal data on the internet    (required)".rjust(80)) {|arg| @confirmed = true}
+      opts.on("--info") do
+        require 'rbconfig'
+        puts RUBY_DESCRIPTION if defined? RUBY_DESCRIPTION
+        puts "CFLAGS='#{Config::CONFIG["CFLAGS"]}' ./configure #{Config::CONFIG["configure_args"]}"
+        bin = "#{Config::CONFIG['bindir']}/#{Config::CONFIG['ruby_install_name']}"
+        puts `file #{bin}`
+
+        if RUBY_PLATFORM =~ /darwin/
+          puts `otool -L #{bin}`
+        else
+          puts `ldd #{bin}`
+        end
+
+        puts
+        exit!
+      end
+    end
+
+    begin
+      @parser.parse!
+    rescue Exception => e
+      if e.kind_of?(SystemExit)
+        raise e
+      else
+        fail_with(e.message)
+      end
+    end
+
+    # Make this default to true if the user didn't pass any preference.
+    @delete_dump = true if @delete_dump.nil?
+
+    # Make this default to 60 if the user didn't pass the number of seconds.
+    @secs ||= 300
+
+    if @file
+      fail_with("File not found: #{@file}") unless File.exists?(@file)
+    end
+
+    if @pid.nil? and @file.nil?
+      fail_with("Missing PID! (-p PID)")
+    elsif @name.nil? || @name.empty?
+      fail_with("Missing name! (-n 'my application')")
+    elsif @key.nil? || @key.empty?
+      fail_with("Missing API key! (-k KEY)")
+    elsif !@confirmed
+      fail_with("\nERROR: You MUST CONFIRM that you understand ALL YOUR CODE "+
+                "WILL BE PUBLICLY \nAVAILABLE ON THE INTERNET by passing " +
+                "--put-my-data-on-the-internet", true)
+    end
+  end
+
+  def run!
+    dump_filename = @file ? compress_file(@file, "/tmp/#{File.basename @file}.gz") : compress_file(get_dump_filename(@pid))
+
+    begin
+      upload_dump(dump_filename, @name, @key)
+    ensure
+      if @delete_dump
+        File.delete(dump_filename)
+        puts "\nDeleted dump file."
+      end
+    end
+
+    puts "Finished!"
+  end
+
+  private
+
+  def compress_file(filename, output=nil)
+    puts "Compressing with gzip..."
+    output ||= "#{filename}.gz"
+    `gzip -c '#{filename}' > '#{output}'`
+    output
+  end
+
+  def get_dump_filename(pid)
+    # Get a listing of files before we signal for the new dump
+    # We'll compare against this later to see which is the new file.
+    old_files = Dir.glob("/tmp/memprof-#{pid}-*")
+    signal_process(pid)
+    timeout = 30
+    puts "Waiting #{timeout} seconds for process #{pid} to create a new dump..."
+
+    file = nil
+
+    timeout.times do |i|
+      sleep 1 unless file = (Dir.glob("/tmp/memprof-#{pid}-*") - old_files).first and break
+      fail_with("Timed out after waiting #{timeout} seconds. Make sure you added require '#{File.expand_path('../../lib/memprof/signal', __FILE__)}' to your application.") if i+1 == timeout
+    end
+
+    puts "\nFound file #{file}"
+
+    if file =~ /\.IN_PROGRESS/
+      file = file.sub(/\.IN_PROGRESS/, "")
+      puts "Dump in progress. Waiting #{@secs} seconds for it to complete..."
+      @secs.times do |i|
+        sleep 1 unless File.exist?(file) and break
+        fail_with("Timed out after waiting #{@secs} seconds") if i+1 == @secs
+      end
+    end
+
+    file
+  end
+
+  def upload_dump(filename, name, key)
+    return if @test
+
+    file = File.open(filename, "r")
+
+    puts "\nUploading to memprof.com..."
+    response = RestClient.post(MEMPROF_URL, :upload => file, :name => name, :key => key)
+
+    puts "Response from server:"
+    p response.to_s
+  end
+
+  def fail_with(str, yell=true)
+    puts @parser.to_s
+    puts
+    if yell
+      print red, bold, str, reset
+      puts
+    else
+      puts "\n" + str
+    end
+    puts
+    exit(1)
+  end
+
+  def signal_process(pid)
+    begin
+      Process.kill("URG", pid)
+    rescue Errno::ESRCH
+      fail_with("No such process #{pid}!")
+    end
+    puts "Signaled process #{pid} with SIGURG"
+  end
+
+end
+
+MemprofUploader.new(ARGV).run!
